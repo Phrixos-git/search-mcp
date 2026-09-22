@@ -86,4 +86,4 @@ Container logs are JSON Lines. Debug/info go to stdout; warn/error go to stderr.
 
 ## Repository status
 
-Phase 1–5 implementation is present. GitHub owner/repository and push target are not configured in this checkout; no remote is set. Add the intended remote and authenticate before publishing. Do not commit `.env`, `secrets/`, database/WAL files, logs, or build artifacts.
+Phase 1–5 implementation is present. The configured remote `origin` points to [`Phrixos-git/search-mcp`](https://github.com/Phrixos-git/search-mcp). Local `main` and GitHub `main` were verified at commit `5a9833543b6f8ce28a032fa508b5e6240efc1df0`; push subsequent commits to `origin main`. Do not commit `.env`, `secrets/`, database/WAL files, logs, or build artifacts.
