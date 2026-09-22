@@ -1,4 +1,5 @@
 # Migrations
 
-SQLite schema migrations will be added here in the database implementation
-phase. Runtime database files are excluded by `.gitignore`.
+SQLite schema migrations are versioned SQL files mirrored by the storage
+package's startup migration runner. Runtime database files are excluded by
+the repository gitignore.

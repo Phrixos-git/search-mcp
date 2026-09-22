@@ -6,9 +6,13 @@ Go製Search MCPの基盤リポジトリです。設計書に従い、以下のTo
 - `fetch_page`
 - `search_local`
 
-## Phase 1
+## Implemented phases
 
-現在はGoプロジェクト、環境変数設定、Docker Compose Secret読込基盤、request/tool-call context、テスト基盤のみを実装しています。MCP transport、SQLite、検索サービス接続、Docker Compose本体は後続Phaseで追加します。
+- Phase 1: Go project, configuration, Docker Secret loading, request/tool-call context.
+- Phase 2: SQLite source of truth, URL canonicalization, and HTTP cache metadata.
+- Phase 3: page fetching, SSRF-safe HTTP access, Meilisearch task synchronization, startup differential sync, and full reindex components.
+
+MCP transport and tool registration are still pending.
 
 ## Configuration
 
