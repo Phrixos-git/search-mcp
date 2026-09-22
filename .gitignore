@@ -1,0 +1,37 @@
+# Build outputs
+/bin/
+/build/
+/dist/
+*.test
+*.out
+coverage.out
+coverage.*
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.secret
+
+# Runtime data
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Logs and temporary files
+*.log
+/tmp/
+*.tmp
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Workspace Git metadata fallback
+.git-real/
