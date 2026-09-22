@@ -39,7 +39,7 @@ func TestEnsureIndexAndDocumentEnqueue(t *testing.T) {
 			w.Write([]byte("{\"taskUid\":1}"))
 		case "GET /tasks/1":
 			w.Write([]byte("{\"status\":\"succeeded\"}"))
-		case "PUT /indexes/pages/settings":
+		case "PATCH /indexes/pages/settings":
 			var payload map[string][]string
 			_ = json.NewDecoder(r.Body).Decode(&payload)
 			if strings.Join(payload["searchableAttributes"], ",") != "title,content" {

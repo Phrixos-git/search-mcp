@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	protocol "github.com/modelcontextprotocol/go-sdk/mcp"
 	"search-mcp/internal/fetch"
+	"search-mcp/internal/metrics"
 	"search-mcp/internal/requestctx"
 	"search-mcp/internal/search"
 	"search-mcp/internal/toolerror"
@@ -34,29 +36,49 @@ type fetcher interface {
 	Fetch(context.Context, string) (fetch.Result, error)
 }
 
-func NewServer(web *search.SearXNG, local search.LocalSearcher, pages fetcher) *protocol.Server {
+type Options struct {
+	Logger  *slog.Logger
+	Metrics *metrics.Registry
+}
+
+func NewServer(web *search.SearXNG, local search.LocalSearcher, pages fetcher, options ...Options) *protocol.Server {
+	var logger *slog.Logger
+	var registry *metrics.Registry
+	if len(options) > 0 {
+		logger = options[0].Logger
+		registry = options[0].Metrics
+	}
 	s := protocol.NewServer(&protocol.Implementation{Name: "search-mcp", Version: "0.1.0"}, nil)
 	protocol.AddTool(s, &protocol.Tool{Name: "search_web", Description: "Search the web using SearXNG."}, func(ctx context.Context, _ *protocol.CallToolRequest, in search.Input) (*protocol.CallToolResult, SearchOutput, error) {
 		ctx = callContext(ctx)
+		started := time.Now()
 		results, partial, e := web.Search(ctx, in)
+		recordCall(ctx, "search_web", e, started, logger, registry)
 		out := SearchOutput{Results: results, Partial: partial, Error: e}
 		return toolResult(e), out, nil
 	})
 	protocol.AddTool(s, &protocol.Tool{Name: "search_local", Description: "Search pages saved in the local index."}, func(ctx context.Context, _ *protocol.CallToolRequest, in search.Input) (*protocol.CallToolResult, LocalOutput, error) {
 		ctx, _ = requestctx.EnsureRequestID(ctx)
 		ctx, _ = requestctx.EnsureToolCallID(ctx)
+		started := time.Now()
 		results, e := search.LocalSearch(ctx, local, in)
+		recordCall(ctx, "search_local", e, started, logger, registry)
 		out := LocalOutput{Results: results, Error: e}
 		return toolResult(e), out, nil
 	})
 	protocol.AddTool(s, &protocol.Tool{Name: "fetch_page", Description: "Fetch and extract a web page."}, func(ctx context.Context, _ *protocol.CallToolRequest, in fetch.Input) (*protocol.CallToolResult, FetchOutput, error) {
 		ctx, _ = requestctx.EnsureRequestID(ctx)
 		ctx, _ = requestctx.EnsureToolCallID(ctx)
+		started := time.Now()
 		if e := in.Validate(); e != nil {
 			mapped := toolerror.Invalid(e.Error())
+			recordCall(ctx, "fetch_page", mapped, started, logger, registry)
 			return toolResult(mapped), FetchOutput{Error: mapped}, nil
 		}
 		result, e := pages.Fetch(ctx, in.URL)
+		if e == nil && registry != nil {
+			registry.RecordCache(result.FromCache)
+		}
 		var mapped *toolerror.Error
 		if e != nil {
 			var fetchErr *fetch.FetchError
@@ -85,9 +107,28 @@ func NewServer(web *search.SearXNG, local search.LocalSearcher, pages fetcher) *
 				mapped = toolerror.FromNetwork(e)
 			}
 		}
+		recordCall(ctx, "fetch_page", mapped, started, logger, registry)
 		return toolResult(mapped), FetchOutput{Result: &result, Error: mapped}, nil
 	})
 	return s
+}
+
+func recordCall(ctx context.Context, tool string, err *toolerror.Error, started time.Time, logger *slog.Logger, registry *metrics.Registry) {
+	status, code := "success", ""
+	if err != nil {
+		status, code = "failure", string(err.Code)
+	}
+	d := time.Since(started)
+	if registry != nil {
+		registry.RecordTool(tool, status, code, d)
+	}
+	if logger != nil {
+		attrs := []any{"event", "tool_call", "tool", tool, "status", status, "duration_ms", d.Milliseconds(), "request_id", requestctx.RequestID(ctx), "tool_call_id", requestctx.ToolCallID(ctx)}
+		if code != "" {
+			attrs = append(attrs, "error_code", code)
+		}
+		logger.InfoContext(ctx, "tool call completed", attrs...)
+	}
 }
 
 func callContext(ctx context.Context) context.Context {
@@ -121,7 +162,11 @@ func NewHTTPHandler(server *protocol.Server) http.Handler {
 }
 
 // Serve starts an HTTP listener and gracefully shuts it down with ctx.
-func Serve(ctx context.Context, addr string, handler http.Handler) error {
+func Serve(ctx context.Context, addr string, handler http.Handler, loggers ...*slog.Logger) error {
+	var logger *slog.Logger
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
 	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
@@ -132,10 +177,22 @@ func Serve(ctx context.Context, addr string, handler http.Handler) error {
 		}
 		return err
 	case <-ctx.Done():
+		if gate, ok := handler.(interface{ SetShuttingDown(bool) }); ok {
+			gate.SetShuttingDown(true)
+		}
+		if logger != nil {
+			logger.Info("graceful shutdown started", "event", "shutdown_started")
+		}
 		shutdown, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdown); err != nil {
+			if logger != nil {
+				logger.Error("graceful shutdown timed out", "event", "shutdown_timeout", "error", err)
+			}
 			return err
+		}
+		if logger != nil {
+			logger.Info("graceful shutdown completed", "event", "shutdown_completed")
 		}
 		err := <-done
 		if err == http.ErrServerClosed {

@@ -58,6 +58,7 @@ func clip(s string, n int) string {
 }
 
 type SearXNG struct {
+	baseURL  string
 	endpoint string
 	client   *http.Client
 	timeout  time.Duration
@@ -74,8 +75,28 @@ func NewSearXNG(baseURL string, client *http.Client, timeout time.Duration) (*Se
 	if client == nil {
 		client = &http.Client{Timeout: timeout}
 	}
+	baseURL = strings.TrimRight(u.String(), "/")
 	u.Path = strings.TrimRight(u.Path, "/") + "/search"
-	return &SearXNG{endpoint: u.String(), client: client, timeout: timeout}, nil
+	return &SearXNG{baseURL: baseURL, endpoint: u.String(), client: client, timeout: timeout}, nil
+}
+
+// Health checks SearXNG without launching a search across external engines.
+func (s *SearXNG) Health(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("SearXNG health HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 type searxResponse struct {

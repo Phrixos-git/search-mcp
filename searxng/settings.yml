@@ -1,0 +1,14 @@
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  limiter: false
+  image_proxy: true
+
+outgoing:
+  request_timeout: 3.0
+  max_request_timeout: 10.0

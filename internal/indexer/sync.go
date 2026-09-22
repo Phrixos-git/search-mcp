@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"search-mcp/internal/metrics"
 	"search-mcp/internal/storage"
 )
 
@@ -15,7 +16,15 @@ func toIndexDocument(d storage.Document) Document {
 }
 
 // SyncDocument advances indexed_hash only after Meilisearch confirms task success.
-func (c *Client) SyncDocument(ctx context.Context, store *storage.Store, d storage.Document) error {
+func (c *Client) SyncDocument(ctx context.Context, store *storage.Store, d storage.Document) (err error) {
+	defer func() {
+		if err != nil {
+			metrics.Default.RecordSyncFailure()
+		}
+		if pending, queryErr := store.Unsynced(context.Background()); queryErr == nil {
+			metrics.Default.SetUnsynced(int64(len(pending)))
+		}
+	}()
 	task, err := c.Enqueue(ctx, toIndexDocument(d))
 	if err != nil {
 		_ = store.SetIndexError(ctx, d.ID, err.Error())
@@ -41,6 +50,9 @@ func (c *Client) SyncPending(ctx context.Context, store *storage.Store) error {
 		if e := c.SyncDocument(ctx, store, d); e != nil {
 			errs = append(errs, fmt.Errorf("document %d: %w", d.ID, e))
 		}
+	}
+	if remaining, e := store.Unsynced(ctx); e == nil {
+		metrics.Default.SetUnsynced(int64(len(remaining)))
 	}
 	return errors.Join(errs...)
 }
@@ -73,8 +85,14 @@ func (c *Client) FullReindex(ctx context.Context, store *storage.Store) error {
 }
 
 func (c *Client) StartupSync(ctx context.Context, store *storage.Store) error {
-	if err := c.EnsureIndex(ctx); err != nil {
+	created, err := c.ensureIndex(ctx)
+	if err != nil {
 		return err
+	}
+	if created {
+		if err = store.ResetIndexState(ctx); err != nil {
+			return err
+		}
 	}
 	return c.SyncPending(ctx, store)
 }

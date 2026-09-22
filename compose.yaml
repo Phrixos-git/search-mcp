@@ -1,0 +1,71 @@
+services:
+  search-mcp:
+    image: search-mcp:0.1.0
+    build: .
+    restart: unless-stopped
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080
+      MEILISEARCH_URL: http://meilisearch:7700
+      SQLITE_DB_PATH: /data/search.db
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8081
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MEILI_MASTER_KEY_FILE: /run/secrets/meili_master_key
+    ports:
+      - "127.0.0.1:${MCP_PORT:-8081}:8081"
+    volumes:
+      - ${SQLITE_DATA_DIR:-${HOME}/.local/share/search-mcp}:/data
+    secrets:
+      - meili_master_key
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.54.0
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+    secrets:
+      - meili_master_key
+    command: ["/bin/sh", "-c", "export MEILI_MASTER_KEY=\"$$(cat /run/secrets/meili_master_key)\"; exec /bin/meilisearch"]
+    volumes:
+      - meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  searxng:
+    image: docker.io/searxng/searxng:2026.9.11-61d660276
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?Set SEARXNG_SECRET in ignored .env}
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng_cache:/var/cache/searxng
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=2).read(1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+secrets:
+  meili_master_key:
+    file: ./secrets/meili_master_key
+
+volumes:
+  meilisearch_data:
+  searxng_cache:

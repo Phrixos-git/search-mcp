@@ -102,39 +102,48 @@ func rawString(m map[string]json.RawMessage, key string) (string, error) {
 }
 
 func (c *Client) EnsureIndex(ctx context.Context) error {
+	_, err := c.ensureIndex(ctx)
+	return err
+}
+
+// ensureIndex reports whether it had to create the index. Callers that treat
+// SQLite as the source of truth can then rebuild remote state when it was lost.
+func (c *Client) ensureIndex(ctx context.Context) (bool, error) {
 	info, err := c.request(ctx, http.MethodGet, "/indexes/"+IndexUID, nil)
+	createdIndex := false
 	if err != nil {
 		var api *APIError
 		if !errors.As(err, &api) || api.Status != http.StatusNotFound {
-			return err
+			return false, err
 		}
 		created, e := c.request(ctx, http.MethodPost, "/indexes", map[string]any{"uid": IndexUID, "primaryKey": "id"})
 		if e != nil {
-			return e
+			return false, e
 		}
 		uid, e := rawInt(created, "taskUid")
 		if e != nil {
-			return e
+			return false, e
 		}
 		if e = c.WaitTask(ctx, uid); e != nil {
-			return e
+			return false, e
 		}
+		createdIndex = true
 	} else if pk := info["primaryKey"]; len(pk) > 0 {
 		key, _ := rawString(info, "primaryKey")
 		if key != "" && key != "id" {
-			return fmt.Errorf("index %q has primary key %q, expected id", IndexUID, key)
+			return false, fmt.Errorf("index %q has primary key %q, expected id", IndexUID, key)
 		}
 	}
 	settings := map[string]any{"searchableAttributes": []string{"title", "content"}, "filterableAttributes": []string{"language", "domain", "content_type"}, "sortableAttributes": []string{"fetched_at", "updated_at"}}
-	task, e := c.request(ctx, http.MethodPut, "/indexes/"+IndexUID+"/settings", settings)
+	task, e := c.request(ctx, http.MethodPatch, "/indexes/"+IndexUID+"/settings", settings)
 	if e != nil {
-		return e
+		return false, e
 	}
 	uid, e := rawInt(task, "taskUid")
 	if e != nil {
-		return e
+		return false, e
 	}
-	return c.WaitTask(ctx, uid)
+	return createdIndex, c.WaitTask(ctx, uid)
 }
 
 type Document struct {
@@ -190,6 +199,12 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]SearchH
 		out = append(out, SearchHit{Title: hit.Title, URL: hit.URL, Snippet: hit.Content, FetchedAt: hit.FetchedAt})
 	}
 	return out, nil
+}
+
+// Health checks Meilisearch's lightweight health endpoint.
+func (c *Client) Health(ctx context.Context) error {
+	_, err := c.request(ctx, http.MethodGet, "/health", nil)
+	return err
 }
 
 func (c *Client) WaitTask(ctx context.Context, uid int64) error {

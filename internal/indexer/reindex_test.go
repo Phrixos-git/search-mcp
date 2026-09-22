@@ -49,7 +49,7 @@ func TestFullReindexRebuildsEverySQLiteDocument(t *testing.T) {
 			w.Write([]byte("{\"taskUid\":2}"))
 		case "GET /tasks/2":
 			w.Write([]byte("{\"status\":\"succeeded\"}"))
-		case "PUT /indexes/pages/settings":
+		case "PATCH /indexes/pages/settings":
 			taskUID = 3
 			w.Write([]byte("{\"taskUid\":3}"))
 		case "GET /tasks/3":
