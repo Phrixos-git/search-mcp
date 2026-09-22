@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"search-mcp/internal/config"
+	"search-mcp/internal/fetch"
 	"search-mcp/internal/indexer"
-	"search-mcp/internal/requestctx"
+	"search-mcp/internal/mcp"
+	"search-mcp/internal/search"
 	"search-mcp/internal/storage"
 )
 
@@ -20,7 +26,8 @@ func main() {
 	}
 
 	logger := log.New(os.Stderr, "search-mcp: ", 0)
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	store, err := storage.Open(ctx, cfg.SQLiteDBPath, cfg.SQLiteBusyTimeout)
 	if err != nil {
 		logger.Printf("SQLite initialization error: %v", err)
@@ -38,5 +45,17 @@ func main() {
 		logger.Printf("Meilisearch startup synchronization error: %v", err)
 		os.Exit(1)
 	}
-	_, _ = requestctx.EnsureRequestID(ctx)
+	web, err := search.NewSearXNG(cfg.SearXNGBaseURL, &http.Client{Timeout: cfg.SearXNGTimeout}, cfg.SearXNGTimeout)
+	if err != nil {
+		logger.Printf("SearXNG configuration error: %v", err)
+		os.Exit(1)
+	}
+	pages := fetch.NewFetcher(store, client, cfg.FetchTimeout, cfg.FetchMaxResponseBytes)
+	server := mcp.NewServer(web, client, pages)
+	addr := fmt.Sprintf("%s:%d", cfg.MCPHost, cfg.MCPPort)
+	logger.Printf("starting stateless Streamable HTTP MCP server on %s", addr)
+	if err := mcp.Serve(ctx, addr, mcp.NewHTTPHandler(server)); err != nil {
+		logger.Printf("HTTP server error: %v", err)
+		os.Exit(1)
+	}
 }

@@ -150,6 +150,14 @@ type Document struct {
 	UpdatedAt    time.Time
 }
 
+// SearchHit is a ranked document returned by the pages index.
+type SearchHit struct {
+	Title     string    `json:"title"`
+	URL       string    `json:"url"`
+	Snippet   string    `json:"snippet"`
+	FetchedAt time.Time `json:"fetched_at"`
+}
+
 func (c *Client) Enqueue(ctx context.Context, d Document) (int64, error) {
 	page := map[string]any{"id": d.ID, "title": d.Title, "url": d.URL, "canonical_url": d.CanonicalURL, "content": d.Content, "language": d.Language, "content_type": d.ContentType, "domain": d.Domain, "fetched_at": d.FetchedAt.UTC().Format(time.RFC3339), "updated_at": d.UpdatedAt.UTC().Format(time.RFC3339)}
 	result, err := c.request(ctx, http.MethodPost, "/indexes/"+IndexUID+"/documents?primaryKey=id", []any{page})
@@ -157,6 +165,31 @@ func (c *Client) Enqueue(ctx context.Context, d Document) (int64, error) {
 		return 0, err
 	}
 	return rawInt(result, "taskUid")
+}
+
+// Search queries the pages index and preserves Meilisearch ranking order.
+func (c *Client) Search(ctx context.Context, query string, limit int) ([]SearchHit, error) {
+	result, err := c.request(ctx, http.MethodPost, "/indexes/"+IndexUID+"/search", map[string]any{"q": query, "limit": limit})
+	if err != nil {
+		return nil, err
+	}
+	if len(result["hits"]) == 0 {
+		return []SearchHit{}, nil
+	}
+	var hits []struct {
+		Title     string    `json:"title"`
+		URL       string    `json:"url"`
+		Content   string    `json:"content"`
+		FetchedAt time.Time `json:"fetched_at"`
+	}
+	if err := json.Unmarshal(result["hits"], &hits); err != nil {
+		return nil, err
+	}
+	out := make([]SearchHit, 0, len(hits))
+	for _, hit := range hits {
+		out = append(out, SearchHit{Title: hit.Title, URL: hit.URL, Snippet: hit.Content, FetchedAt: hit.FetchedAt})
+	}
+	return out, nil
 }
 
 func (c *Client) WaitTask(ctx context.Context, uid int64) error {

@@ -73,6 +73,36 @@ func TestEnsureIndexAndDocumentEnqueue(t *testing.T) {
 	}
 }
 
+func TestSearchPreservesMeilisearchRanking(t *testing.T) {
+	var seen bool
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/indexes/pages/search" {
+			t.Errorf("request %s %s", r.Method, r.URL)
+			http.NotFound(w, r)
+			return
+		}
+		var input map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&input)
+		if input["q"] != "needle" || input["limit"] != float64(2) {
+			t.Errorf("payload=%#v", input)
+		}
+		seen = true
+		w.Write([]byte(`{"hits":[{"title":"rank 1","url":"https://a.test/","content":"a","fetched_at":"2026-09-22T10:00:00Z"},{"title":"rank 2","url":"https://b.test/","content":"b","fetched_at":"2026-09-22T11:00:00Z"}]}`))
+	}, time.Millisecond, time.Second)
+	hits, err := c.Search(context.Background(), "needle", 2)
+	if err != nil || !seen || len(hits) != 2 || hits[0].Title != "rank 1" || hits[1].Title != "rank 2" {
+		t.Fatalf("hits=%+v err=%v", hits, err)
+	}
+}
+
+func TestSearchEmptyIsNormal(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"hits":[]}`)) }, time.Millisecond, time.Second)
+	hits, err := c.Search(context.Background(), "absent", 5)
+	if err != nil || hits == nil || len(hits) != 0 {
+		t.Fatalf("hits=%v err=%v", hits, err)
+	}
+}
+
 func TestWaitTaskFailed(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("{\"status\":\"failed\",\"error\":{\"message\":\"bad document\"}}"))
