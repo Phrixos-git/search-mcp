@@ -29,6 +29,20 @@ services:
       retries: 3
       start_period: 30s
 
+  nginx:
+    image: nginx:1.28.0-alpine
+    profiles: [proxy]
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      NGINX_PORT: ${NGINX_PORT:-38083}
+      MCP_PORT: ${MCP_PORT:-8081}
+    volumes:
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      search-mcp:
+        condition: service_healthy
+
   meilisearch:
     image: getmeili/meilisearch:v1.54.0
     restart: unless-stopped
